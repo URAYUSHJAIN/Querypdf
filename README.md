@@ -1,10 +1,10 @@
-# QueryPDF 🔒
+# QueryPDF <img src="logo.png" alt="QueryPDF Logo" width="32" height="32" style="vertical-align: middle;">
 
 A privacy-focused PDF chat application that runs 100% in your browser using AI.
 
 ## Architecture
 
-![QueryPDF Architecture](https://raw.githubusercontent.com/URAYUSHJAIN/Querypdf/main/architecture-diagram.png)
+![QueryPDF Architecture](https://raw.githubusercontent.com/URAYUSHJAIN/Querypdf/main/architecture-diagram.jpg)
 
 **100% Client-Side Processing** - No data leaves your device. No backend server.
 
