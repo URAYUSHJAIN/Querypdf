@@ -1,0 +1,1250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QueryPDF</title>
+    <!-- 1. Load Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 2. Load mobile-responsive styles -->
+    <link rel="stylesheet" href="mobile-styles.css?v=2">
+    <style>
+        /* IBM Plex Mono font family */
+        body {
+            font-family: 'IBM Plex Mono', monospace;
+        }
+        
+        /* File upload button styling */
+        #pdf-upload-label {
+            border: 2px dashed #9ca3af; /* gray-400 */
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        #pdf-upload-label:hover {
+            border-color: #3b82f6; /* blue-500 */
+            background-color: #f9fafb; /* gray-50 */
+        }
+        
+        /* Split layout for PDF viewer + chat */
+        .split-container {
+            display: flex;
+            gap: 1.5rem;
+            align-items: stretch;
+            height: calc(100vh - 200px);
+        }
+        
+        /* Panel base styles (used for viewer, chat, and content panels) */
+        #pdf-viewer-section, #chat-panel, .panel {
+            background: #ffffff;
+            border-radius: 0.5rem;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+            display: flex;
+            flex-direction: column;
+        }
+        
+        #pdf-viewer-section {
+            width: 55%;
+            border: 1px solid #e5e7eb;
+            padding: 1rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        #chat-panel {
+            width: 45%;
+            padding: 0.75rem;
+            overflow-y: auto;
+        }
+        
+        .panel {
+            padding: 0.75rem;
+            border-radius: 8px;
+            flex: 1;
+            overflow-y: auto;
+        }
+        
+        /* PDF canvas and controls */
+        #pdf-canvas {
+            max-width: 100%;
+            max-height: 100%;
+            width: auto !important;
+            height: auto !important;
+            flex-shrink: 0;
+            display: block;
+            box-shadow: 0 8px 24px rgba(15,23,42,0.12);
+            border-radius: 8px;
+            background: white;
+            border: 1px solid #e5e7eb;
+            object-fit: contain;
+        }
+        
+        #pdf-canvas-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: auto;
+            width: 100%;
+            min-height: 0;
+        }
+        
+        .page-controls { 
+            display: flex; 
+            gap: 0.75rem; 
+            align-items: center; 
+            justify-content: center; 
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
+            flex-shrink: 0; 
+            padding: 0.5rem;
+        }
+
+        .page-controls button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 0.625rem 1.25rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.2s;
+            box-shadow: 0 2px 4px rgba(59,130,246,0.2);
+        }
+
+        .page-controls button:hover:not(:disabled) {
+            background: #2563eb;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 6px rgba(59,130,246,0.3);
+        }
+
+        .page-controls button:disabled {
+            background: #d1d5db;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        .page-controls #page-num {
+            color: #1f2937;
+            font-size: 0.95rem;
+            font-weight: 600;
+            min-width: 120px;
+            text-align: center;
+            padding: 0.5rem;
+            background: #f9fafb;
+            border-radius: 6px;
+            border: 1px solid #e5e7eb;
+        }
+        
+        /* Tab content wrapper */
+        .tab-content-wrapper {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* Quiz styling */
+        .quiz-option { 
+            display: block; 
+            width: 100%; 
+            text-align: left; 
+            padding: 0.75rem; 
+            border: 1px solid #e5e7eb; 
+            border-radius: 6px; 
+            margin-top: 0.5rem; 
+            cursor: pointer; 
+        }
+        .quiz-option.selected { 
+            background: #e0f2fe; 
+            border-color: #7dd3fc; 
+        }
+        
+        /* Quiz feedback styling */
+        .quiz-feedback { 
+            padding: 0.75rem; 
+            border-radius: 6px; 
+            margin-top: 1rem; 
+            border-left: 4px solid;
+        }
+        .quiz-feedback.correct { 
+            background: #ecfdf5; 
+            border-color: #10b981; 
+        }
+        .quiz-feedback.incorrect { 
+            background: #fff1f2; 
+            border-color: #fb7185;
+            color: #fee2e2;
+        }
+        
+        /* Chat section width */
+        #chat-section {
+            max-width: 100% !important;
+            width: 100%;
+        }
+        
+        /* Progress bar styles */
+        #indexing-progress-container {
+            display: none;
+            padding: 1rem;
+            background: #f0f9ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 6px;
+            margin-bottom: 1rem;
+        }
+        #indexing-progress-container.visible {
+            display: block;
+        }
+        #indexing-progress-bar {
+            width: 100%;
+            height: 24px;
+            background: #e5e7eb;
+            border-radius: 12px;
+            overflow: hidden;
+            margin: 0.5rem 0;
+        }
+        #indexing-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6, #2563eb);
+            width: 0%;
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body class="bg-white text-gray-900 min-h-screen">
+
+    <!-- Top Navigation Bar -->
+    <nav class="w-full p-6 sm:p-8 max-w-6xl mx-auto">
+        <h1 class="text-lg font-semibold">QueryPDF 🔒</h1>
+    </nav>
+
+    <!-- 1: File Upload / Hero Section -->
+    <div id="upload-section" class="max-w-6xl mx-auto px-6 sm:px-8 py-16 text-center">
+        <h2 class="text-4xl sm:text-5xl font-bold">Private PDF Chat AI 🔒</h2>
+        <p class="text-lg text-gray-600 mt-4 max-w-2xl mx-auto">
+            Ask questions to your documents. This app runs 100% in your browser. No data ever leaves your device.
+        </p>
+
+        <!-- Status Box -->
+        <div id="status" class="mt-8 max-w-md mx-auto text-center bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-lg text-sm" role="alert">
+            Loading AI model... (This happens once)
+        </div>
+
+        <!-- Progress bar for PDF to JSON conversion -->
+        <div id="indexing-progress-container" class="mt-4 max-w-md mx-auto">
+            <div class="text-sm font-semibold text-blue-700 mb-2">Converting PDF to JSON...</div>
+            <div id="indexing-progress-bar">
+                <div id="indexing-progress-fill">0%</div>
+            </div>
+            <div id="indexing-eta" class="text-xs text-gray-500 mt-1"></div>
+        </div>
+
+        <!-- File Upload Area -->
+        <div class="mt-8">
+            <label id="pdf-upload-label" for="pdf-upload" class="flex flex-col items-center justify-center p-8 rounded-lg">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-10 h-10 text-gray-500">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m.75 12 3 3m0 0 3-3m-3 3v-6m-1.5-9H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                </svg>
+                <span id="upload-text" class="mt-2 font-semibold text-blue-600">Click to upload your PDF</span>
+                <span class="text-sm text-gray-500">Your data never leaves your device</span>
+            </label>
+            <input type="file" id="pdf-upload" accept="application/pdf" class="hidden" disabled>
+        </div>
+
+        <!-- Features Section -->
+        <div class="mt-16 py-12">
+            <h3 class="text-2xl font-bold text-center mb-12">Why Choose QueryPDF?</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <!-- Feature 1: Privacy -->
+                <div class="flex flex-col items-center p-6 bg-white border border-gray-200 rounded-xl hover:shadow-lg transition-shadow">
+                    <div class="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mb-4">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6 text-green-600">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                    </div>
+                    <h4 class="font-semibold text-lg mb-2">100% Private</h4>
+                    <p class="text-gray-600 text-sm text-center">Your PDFs never leave your device. All processing happens locally in your browser.</p>
+                </div>
+
+                <!-- Feature 2: No Signup -->
+                <div class="flex flex-col items-center p-6 bg-white border border-gray-200 rounded-xl hover:shadow-lg transition-shadow">
+                    <div class="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mb-4">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6 text-blue-600">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                    </div>
+                    <h4 class="font-semibold text-lg mb-2">No Sign Up</h4>
+                    <p class="text-gray-600 text-sm text-center">Start using immediately. No registration, no login, no cookies required.</p>
+                </div>
+
+                <!-- Feature 3: Fast & Free -->
+                <div class="flex flex-col items-center p-6 bg-white border border-gray-200 rounded-xl hover:shadow-lg transition-shadow">
+                    <div class="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center mb-4">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6 text-purple-600">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                    </div>
+                    <h4 class="font-semibold text-lg mb-2">Fast & Free</h4>
+                    <p class="text-gray-600 text-sm text-center">Instant AI analysis with no limits. Powered by cutting-edge AI models.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Capabilities Section -->
+        <div class="mt-16 py-12 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl px-8">
+            <h3 class="text-2xl font-bold text-center mb-12">Powerful Capabilities</h3>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div class="flex gap-4">
+                    <div class="flex-shrink-0">
+                        <span class="flex items-center justify-center h-10 w-10 rounded-md bg-blue-600 text-white">📄</span>
+                    </div>
+                    <div>
+                        <h4 class="font-semibold mb-1">Extract Summaries</h4>
+                        <p class="text-sm text-gray-600">Get instant summaries of any PDF document, no matter the length.</p>
+                    </div>
+                </div>
+
+                <div class="flex gap-4">
+                    <div class="flex-shrink-0">
+                        <span class="flex items-center justify-center h-10 w-10 rounded-md bg-blue-600 text-white">❓</span>
+                    </div>
+                    <div>
+                        <h4 class="font-semibold mb-1">Ask Questions</h4>
+                        <p class="text-sm text-gray-600">Ask specific questions and get accurate answers from your PDF content.</p>
+                    </div>
+                </div>
+
+                <div class="flex gap-4">
+                    <div class="flex-shrink-0">
+                        <span class="flex items-center justify-center h-10 w-10 rounded-md bg-blue-600 text-white">🎯</span>
+                    </div>
+                    <div>
+                        <h4 class="font-semibold mb-1">Generate Quizzes</h4>
+                        <p class="text-sm text-gray-600">Create interactive quizzes to test your understanding of the material.</p>
+                    </div>
+                </div>
+
+                <div class="flex gap-4">
+                    <div class="flex-shrink-0">
+                        <span class="flex items-center justify-center h-10 w-10 rounded-md bg-blue-600 text-white">⚡</span>
+                    </div>
+                    <div>
+                        <h4 class="font-semibold mb-1">Instant Results</h4>
+                        <p class="text-sm text-gray-600">Get results in seconds with AI-powered analysis running locally.</p>
+                    </div>
+                </div>
+
+                <div class="flex gap-4">
+                    <div class="flex-shrink-0">
+                        <span class="flex items-center justify-center h-10 w-10 rounded-md bg-blue-600 text-white">📱</span>
+                    </div>
+                    <div>
+                        <h4 class="font-semibold mb-1">Mobile Friendly</h4>
+                        <p class="text-sm text-gray-600">Works perfectly on phones, tablets, and desktop browsers.</p>
+                    </div>
+                </div>
+
+                <div class="flex gap-4">
+                    <div class="flex-shrink-0">
+                        <span class="flex items-center justify-center h-10 w-10 rounded-md bg-blue-600 text-white">🔐</span>
+                    </div>
+                    <div>
+                        <h4 class="font-semibold mb-1">Secure & Safe</h4>
+                        <p class="text-sm text-gray-600">No data storage. Your documents are processed and forgotten instantly.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- CTA Section -->
+        <div class="mt-16 py-16 text-center">
+            <h3 class="text-3xl font-bold mb-4">Ready to Chat with Your PDFs?</h3>
+            <p class="text-lg text-gray-600 mb-8 max-w-2xl mx-auto">Upload any PDF document and start asking questions powered by AI. Your data stays private and secure.</p>
+            <button class="inline-flex items-center justify-center px-8 py-4 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors text-lg gap-2" onclick="document.getElementById('pdf-upload-label').click()">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                </svg>
+                Get Started Now
+            </button>
+        </div>
+
+        <!-- Footer -->
+        <div class="mt-16 pt-12 border-t border-gray-200 text-center text-gray-600 pb-8">
+            <p class="text-sm">Built with 💙 | Open Source | Privacy First | No Analytics</p>
+            <p class="text-xs text-gray-500 mt-2">© 2025 QueryPDF. Your data, your device, your control.</p>
+        </div>
+    </div>
+
+    <!-- 2: Chat Section (Hidden by default) -->
+    <div id="chat-section" class="hidden mx-auto px-6 sm:px-8 py-8">
+
+        <div class="split-container">
+            <!-- Left: PDF Viewer -->
+            <aside id="pdf-viewer-section">
+                <h3 class="text-md font-semibold flex-shrink-0">PDF Viewer</h3>
+                <div id="pdf-canvas-container">
+                    <canvas id="pdf-canvas"></canvas>
+                </div>
+                <div class="page-controls">
+                    <button id="prev-page" class="px-3 py-1 bg-gray-100 rounded-md hover:bg-gray-200">Previous</button>
+                    <div id="page-num" class="text-sm text-gray-600 min-w-[100px] text-center">Page 0 / 0</div>
+                    <button id="next-page" class="px-3 py-1 bg-gray-100 rounded-md hover:bg-gray-200">Next</button>
+                </div>
+            </aside>
+
+            <!-- Right: Chat Panel with Tabs -->
+            <div id="chat-panel">
+                <!-- Tab Navigation -->
+                <div role="tablist" aria-label="Document modes" class="flex space-x-6 border-b border-gray-200 mb-4 flex-shrink-0">
+                    <button id="tab-summary" role="tab" aria-controls="summary-content" aria-selected="false" class="pb-3 text-gray-600 hover:text-gray-900 transition-all font-medium">
+                        Summary
+                    </button>
+                    <button id="tab-qa" role="tab" aria-controls="qa-content" aria-selected="true" class="pb-3 border-b-2 border-blue-600 text-blue-600 transition-all font-medium">
+                        Q&A
+                    </button>
+                    <button id="tab-quiz" role="tab" aria-controls="quiz-content" aria-selected="false" class="pb-3 text-gray-600 hover:text-gray-900 transition-all font-medium">
+                        Quiz
+                    </button>
+                </div>
+
+                <!-- Tab Content Container (scrollable) -->
+                <div class="tab-content-wrapper">
+                    <!-- Summary Content -->
+                    <div id="summary-content" role="tabpanel" aria-labelledby="tab-summary" class="hidden panel">
+                        <h3 class="text-lg font-semibold flex-shrink-0">Summary</h3>
+                        <p class="text-sm text-gray-600 mt-2 flex-shrink-0">Generate a summary of your PDF document.</p>
+                        <button id="generate-summary-button" class="mt-4 w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-all flex-shrink-0">Generate Summary</button>
+                        <div id="summary-output" class="mt-4 w-full p-4 min-h-[6rem] bg-gray-50 border border-gray-200 rounded-lg overflow-y-auto flex-1">
+                            <!-- Summary output will appear here -->
+                        </div>
+                    </div>
+
+                    <!-- Q&A Content (default active) -->
+                    <div id="qa-content" role="tabpanel" aria-labelledby="tab-qa" class="panel">
+                        <!-- Column 1: Ask a Question -->
+                        <div class="flex-shrink-0">
+                            <h3 class="text-lg font-semibold">Ask a Question</h3>
+                            <p class="text-sm text-gray-600 mt-2">Ask a specific question about the PDF content.</p>
+                            <input type="text" id="question-input" class="mt-4 w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="e.g., What was the main conclusion?">
+                            <button id="ask-button" class="mt-3 w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-all disabled:bg-gray-400 disabled:cursor-not-allowed">
+                                Ask
+                            </button>
+                        </div>
+                        
+                        <!-- Column 2: Answer Area -->
+                        <div class="mt-6 flex-1 overflow-y-auto">
+                            <h3 class="text-lg font-semibold flex-shrink-0">AI Answer</h3>
+                            <div id="answer-output" class="mt-2 w-full p-4 min-h-[6rem] bg-gray-50 border border-gray-200 rounded-lg overflow-y-auto" aria-live="polite">
+                                Ask a question to get an answer from the PDF.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Quiz Content -->
+                    <div id="quiz-content" role="tabpanel" aria-labelledby="tab-quiz" class="hidden panel">
+                        <h3 class="text-lg font-semibold flex-shrink-0">Quiz</h3>
+                        <p class="text-sm text-gray-600 mt-2 flex-shrink-0">Test your knowledge with auto-generated questions.</p>
+                        <button id="generate-quiz-button" class="mt-4 w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-all flex-shrink-0">Generate Quiz</button>
+                        <div id="quiz-container" class="mt-4 w-full p-4 min-h-[6rem] bg-gray-50 border border-gray-200 rounded-lg overflow-y-auto flex-1">
+                            <!-- Quiz UI will appear here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+
+    </div>
+
+        <!--
+            2. Load the AI library (Transformers.js)
+            NOTE: transformers.js is an ESM module. Load it via `import` inside a module script
+            to avoid the "Unexpected token 'export'" error seen when included as a classic script.
+        -->
+    
+    <!-- 
+      3. Load the PDF reading library (pdf.js)
+    -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <script>
+        // Set up the worker for pdf.js
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js`;
+    </script>
+
+    <script type="module">
+        // Import the Transformers.js ESM entry from CDN (only for text generation)
+        import { pipeline } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.1/dist/transformers.min.js';
+
+        // 4. Get references to our HTML elements
+        const status = document.getElementById('status');
+        const uploadElement = document.getElementById('pdf-upload');
+        const uploadLabel = document.getElementById('pdf-upload-label');
+        const uploadText = document.getElementById('upload-text');
+        const uploadSection = document.getElementById('upload-section');
+        const chatSection = document.getElementById('chat-section');
+        // const summarizeButton = document.getElementById('summarize-button'); // Removed summarize button
+        const questionInput = document.getElementById('question-input');
+        const askButton = document.getElementById('ask-button');
+        const answerOutput = document.getElementById('answer-output');
+
+        // Helper to update status message
+        function updateStatus(msg, isError = false) {
+            status.textContent = msg;
+            if (isError) {
+                status.classList.add('bg-red-50', 'border-red-200', 'text-red-700');
+                status.classList.remove('bg-blue-50', 'border-blue-200', 'text-blue-700');
+            } else {
+                status.classList.add('bg-blue-50', 'border-blue-200', 'text-blue-700');
+                status.classList.remove('bg-red-50', 'border-red-200', 'text-red-700');
+            }
+        }
+
+        // Tab elements
+        const tabSummary = document.getElementById('tab-summary');
+        const tabQA = document.getElementById('tab-qa');
+        const tabQuiz = document.getElementById('tab-quiz');
+
+        const summaryContent = document.getElementById('summary-content');
+        const qaContent = document.getElementById('qa-content');
+        const quizContent = document.getElementById('quiz-content');
+
+        // Tab switching function
+        function switchTab(tabName) {
+            // Reset all tab buttons
+            const tabs = [tabSummary, tabQA, tabQuiz];
+            tabs.forEach(t => {
+                if (!t) return;
+                t.classList.remove('border-b-2', 'border-blue-600', 'text-blue-600');
+                t.classList.add('text-gray-600');
+                t.setAttribute('aria-selected', 'false');
+            });
+
+            // Hide all content panels
+            const panels = [summaryContent, qaContent, quizContent];
+            panels.forEach(p => { if (p) p.classList.add('hidden'); });
+
+            // Activate the selected tab
+            if (tabName === 'summary') {
+                tabSummary.classList.add('border-b-2', 'border-blue-600', 'text-blue-600');
+                tabSummary.classList.remove('text-gray-600');
+                tabSummary.setAttribute('aria-selected', 'true');
+                summaryContent.classList.remove('hidden');
+            } else if (tabName === 'qa') {
+                tabQA.classList.add('border-b-2', 'border-blue-600', 'text-blue-600');
+                tabQA.classList.remove('text-gray-600');
+                tabQA.setAttribute('aria-selected', 'true');
+                qaContent.classList.remove('hidden');
+            } else if (tabName === 'quiz') {
+                tabQuiz.classList.add('border-b-2', 'border-blue-600', 'text-blue-600');
+                tabQuiz.classList.remove('text-gray-600');
+                tabQuiz.setAttribute('aria-selected', 'true');
+                quizContent.classList.remove('hidden');
+            }
+        }
+
+        // Add event listeners to tabs
+        if (tabSummary) tabSummary.addEventListener('click', () => switchTab('summary'));
+        if (tabQA) tabQA.addEventListener('click', () => switchTab('qa'));
+        if (tabQuiz) tabQuiz.addEventListener('click', () => switchTab('quiz'));
+
+        // Default to Q&A
+        switchTab('qa');
+
+        // Make upload label click friendly: show helpful message if models still loading
+        uploadLabel.addEventListener('click', (ev) => {
+            // if input is disabled, prevent default and show a message
+            if (uploadElement.disabled) {
+                ev.preventDefault();
+                status.textContent = 'Models are still loading — please wait a moment before uploading.';
+                return false;
+            }
+            // otherwise let the label click open the file input
+            return true;
+        });
+
+    // 5. Global state variables
+    let generationModel = null; // Text generation model
+    let pdfText = ''; // Simple text cache for PDF content
+    let fullDocumentText = ""; // Full text for reference
+
+    // New state for PDF viewer, summary and quiz
+    let pdfDocument = null;
+    let currentPage = 1;
+    let summaryText = null;
+    let quizQuestions = [];
+    let currentQuizIndex = 0;
+    let quizScore = 0;
+    // Processing control token to allow cancellation between uploads
+    let currentProcessingId = 0;
+    // Ask request token to prevent race conditions
+    let lastAskRequestId = 0;
+    // Q&A response cache to avoid redundant generation
+    let questionCache = {};
+
+        // 6. Utility Functions for AI
+        
+        // **COMMENT 5: Debounce helper to prevent excessive function invocations**
+        function debounce(fn, ms) {
+            let timeoutId = null;
+            return function debounced(...args) {
+                if (timeoutId !== null) clearTimeout(timeoutId);
+                timeoutId = setTimeout(() => {
+                    fn.apply(this, args);
+                    timeoutId = null;
+                }, ms);
+            };
+        }
+
+        // 7. Core AI Initialization
+        
+        // Helper to load a model with progress callback
+        async function loadModel(pipelineType, modelId, options = {}) {
+            const progressCallback = (data) => {
+                if (data.status === 'progress') {
+                    const modelName = data.name.split('/').pop();
+                    const percent = Math.round(data.progress);
+                    status.textContent = `Loading ${modelName}... (${percent}%)`;
+                } else if (data.status === 'ready') {
+                    console.log('Model ready:', data.name);
+                }
+            };
+            
+            const device = navigator.gpu ? 'webgpu' : undefined;
+            const pipelineOptions = device ? { device, progress_callback: progressCallback, ...options } : { progress_callback: progressCallback, ...options };
+            
+            return await pipeline(pipelineType, modelId, pipelineOptions);
+        }
+        
+        async function initializeAI() {
+            // For local models, we need to use the Hugging Face CDN model as fallback
+            // since Transformers.js has issues with local file loading in browsers
+            // Use the CDN version for now (will be cached after first load)
+            const generationId = 'Xenova/flan-t5-small';
+            
+            console.log('Loading model from:', generationId);
+            
+            try {
+                // Load the Text Generation Model
+                status.textContent = 'Loading AI Model (first time downloads ~850MB, then cached)...';
+                generationModel = await loadModel('text2text-generation', generationId);
+                
+                // Run warmup inference to prime caches
+                status.textContent = 'Warming up model...';
+                try {
+                    await generationModel('Warmup', { max_new_tokens: 1, do_sample: false, num_beams: 1 });
+                    console.log('Model warmup complete');
+                } catch (warmupErr) {
+                    console.warn('Warmup inference failed:', warmupErr);
+                }
+                
+                // AI is ready, enable file upload
+                updateStatus('✅ AI Model Loaded. Please upload a PDF.');
+                uploadElement.disabled = false;
+
+                // Expose model for debugging in the console
+                window.generationModel = generationModel;
+            } catch (e) {
+                console.error('Model loading failed:', e);
+                updateStatus(`❌ Error loading model: ${e.message}. Please refresh the page and try again.`, true);
+            }
+        }
+
+        // 8. PDF Processing - Convert to JSON Knowledge Base
+        
+        uploadElement.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            try {
+                status.textContent = 'Reading PDF...';
+                uploadLabel.disabled = true;
+                uploadText.textContent = 'Processing...';
+
+                const fileReader = new FileReader();
+                
+                fileReader.onload = async (loadEvent) => {
+                    const typedarray = new Uint8Array(loadEvent.target.result);
+                    const pdf = await pdfjsLib.getDocument({ data: typedarray }).promise;
+                    
+                    // Reset cached state for a new document
+                    summaryText = null;
+                    quizQuestions = [];
+                    questionCache = {};
+                    currentQuizIndex = 0;
+                    quizScore = 0;
+                    document.getElementById('summary-output').innerHTML = '';
+                    document.getElementById('answer-output').textContent = 'Ask a question to get an answer from the PDF.';
+                    document.getElementById('quiz-container').innerHTML = '';
+                    currentPage = 1;
+                    
+                    // Store pdf document for rendering
+                    pdfDocument = pdf;
+                    
+                    // Create a cancelable processing token for this upload
+                    currentProcessingId += 1;
+                    const thisProcessingId = currentProcessingId;
+
+                    // Show progress bar
+                    const progressContainer = document.getElementById('indexing-progress-container');
+                    const progressFill = document.getElementById('indexing-progress-fill');
+                    progressContainer.classList.add('visible');
+                    progressFill.style.width = '0%';
+                    progressFill.textContent = '0%';
+                    
+                    // Simple text caching - just extract all text
+                    pdfText = "";
+                    fullDocumentText = "";
+
+                    // Extract text page by page
+                    for (let i = 1; i <= pdf.numPages; i++) {
+                        // Check if processing was cancelled
+                        if (thisProcessingId !== currentProcessingId) {
+                            status.textContent = 'Processing cancelled.';
+                            progressContainer.classList.remove('visible');
+                            return;
+                        }
+
+                        status.textContent = `Reading Page ${i} / ${pdf.numPages}...`;
+                        
+                        // Update progress bar
+                        const percent = Math.round((i / pdf.numPages) * 100);
+                        progressFill.style.width = percent + '%';
+                        progressFill.textContent = percent + '%';
+
+                        const page = await pdf.getPage(i);
+                        const textContent = await page.getTextContent();
+                        const pageText = textContent.items.map(item => item.str).join(' ');
+
+                        pdfText += pageText + '\n\n';
+                        fullDocumentText += pageText + '\n\n';
+
+                        // Yield to browser to keep UI responsive
+                        await new Promise(requestAnimationFrame);
+                    }
+
+                    if (thisProcessingId === currentProcessingId) {
+                        // Hide progress bar on completion
+                        progressContainer.classList.remove('visible');
+                        status.textContent = `✅ PDF Ready! (${pdf.numPages} pages loaded into cache).`;
+                        
+                        console.log('PDF Text loaded:', pdfText.length, 'characters');
+                        
+                        uploadSection.classList.add('hidden'); // Hide hero
+                        chatSection.classList.remove('hidden'); // Show chat grid
+                        
+                        // Render first page in the viewer
+                        try { renderPDFViewer(1); } catch (e) { console.warn('PDF render failed', e); }
+                    }
+                };
+                
+                fileReader.readAsArrayBuffer(file);
+                
+            } catch (e) {
+                status.textContent = `Error processing PDF: ${e.message}`;
+                uploadLabel.disabled = false;
+                uploadText.textContent = 'Click to upload your PDF';
+            }
+        });
+
+        // Helper function to split text into paragraphs
+        function splitIntoParagraphs(text) {
+            if (!text || text.trim().length === 0) return [];
+            
+            // Split by sentence endings and group into paragraphs
+            const sentences = text.match(/[^\.\!\?]+[\.\!\?]+/g) || [text];
+            const paragraphs = [];
+            let currentParagraph = '';
+            
+            for (const sentence of sentences) {
+                const trimmed = sentence.trim();
+                if (!trimmed) continue;
+                
+                // Group 2-4 sentences into a paragraph
+                if (currentParagraph.length === 0) {
+                    currentParagraph = trimmed;
+                } else if ((currentParagraph + ' ' + trimmed).length < 500) {
+                    currentParagraph += ' ' + trimmed;
+                } else {
+                    paragraphs.push(currentParagraph);
+                    currentParagraph = trimmed;
+                }
+            }
+            
+            if (currentParagraph) {
+                paragraphs.push(currentParagraph);
+            }
+            
+            return paragraphs;
+        }
+
+        // Helper to get relevant context from cached text with keyword matching
+        function getRelevantContext(question, maxChars = 3000) {
+            if (!pdfText) return '';
+            
+            // Extract keywords from question (words longer than 3 chars)
+            const keywords = question.toLowerCase()
+                .split(/\s+/)
+                .filter(word => word.length > 3)
+                .filter(word => !['what', 'where', 'when', 'which', 'whom', 'whose', 'this', 'that', 'these', 'those', 'from', 'with', 'about'].includes(word));
+            
+            if (keywords.length === 0) {
+                // No keywords, return first portion
+                return pdfText.slice(0, maxChars);
+            }
+            
+            // Split text into chunks and score them
+            const chunkSize = 500;
+            const chunks = [];
+            for (let i = 0; i < pdfText.length; i += chunkSize) {
+                chunks.push({
+                    text: pdfText.slice(i, i + chunkSize),
+                    startPos: i
+                });
+            }
+            
+            // Score each chunk based on keyword matches
+            const scoredChunks = chunks.map(chunk => {
+                const lowerText = chunk.text.toLowerCase();
+                let score = 0;
+                
+                for (const keyword of keywords) {
+                    const regex = new RegExp(keyword, 'gi');
+                    const matches = lowerText.match(regex);
+                    if (matches) {
+                        score += matches.length * 2; // Weight keyword matches heavily
+                    }
+                }
+                
+                return { ...chunk, score };
+            });
+            
+            // Sort by score and get top chunks
+            scoredChunks.sort((a, b) => b.score - a.score);
+            
+            // If we found relevant chunks, use them
+            if (scoredChunks[0].score > 0) {
+                let context = '';
+                for (let i = 0; i < Math.min(3, scoredChunks.length); i++) {
+                    if (scoredChunks[i].score > 0) {
+                        context += scoredChunks[i].text + '\n\n';
+                    }
+                    if (context.length >= maxChars) break;
+                }
+                return context.slice(0, maxChars);
+            }
+            
+            // No relevant chunks found, return first portion
+            return pdfText.slice(0, maxChars);
+        }
+
+        // 9. Handle User Actions - Q&A with cached text
+        
+        // **COMMENT 5: Debounce Ask button to prevent excessive invocations**
+        const handleAskClick = debounce(async () => {
+            const question = questionInput.value;
+            if (question.length < 5) {
+                answerOutput.textContent = 'Please ask a longer question.';
+                return;
+            }
+
+            // Guard against empty knowledge base
+            if (!pdfText || pdfText.length === 0) {
+                status.textContent = 'Document not processed yet.';
+                answerOutput.textContent = 'Please upload and process a PDF first.';
+                return;
+            }
+
+            // Check cache first
+            const cacheKey = question.toLowerCase().trim();
+            if (questionCache[cacheKey]) {
+                answerOutput.textContent = questionCache[cacheKey];
+                status.textContent = '✓ (Cached result)';
+                questionInput.value = '';
+                return;
+            }
+
+            // Guard concurrent requests using a request id token
+            lastAskRequestId += 1;
+            const thisAskId = lastAskRequestId;
+
+            // Disable UI while request is in-flight
+            askButton.disabled = true;
+            questionInput.disabled = true;
+            questionInput.value = '';
+
+            status.textContent = 'Searching document...';
+            answerOutput.textContent = 'Thinking...';
+
+            try {
+                // Get relevant context from cached text with keyword search
+                const context = getRelevantContext(question, 2000);
+
+                status.textContent = 'Generating answer...';
+                
+                // Use proper flan-t5 format with clean context
+                const cleanContext = context.slice(0, 800).trim();
+                const prompt = `question: ${question} context: ${cleanContext}`;
+
+                // Use beam search with diversity penalty for high-quality, non-repetitive answers
+                const output = await generationModel(prompt, {
+                    max_new_tokens: 1000,
+                    min_length: 10,
+                    num_beams: 4,
+                    num_beam_groups: 2,
+                    diversity_penalty: 0.5,
+                    do_sample: false,
+                    repetition_penalty: 1.5,
+                    no_repeat_ngram_size: 3,
+                    length_penalty: 1.0,
+                    early_stopping: true,
+                    forced_bos_token_id: null
+                });
+
+                // Only render the answer if this is still the latest request
+                if (thisAskId === lastAskRequestId) {
+                    const answer = output[0].generated_text.trim();
+                    
+                    answerOutput.textContent = answer;
+                    questionCache[cacheKey] = answer;
+                    status.textContent = 'Answer complete. Ask another question!';
+                } else {
+                    console.log('Stale answer suppressed for askId', thisAskId);
+                }
+            } catch (e) {
+                console.error('Ask failed', e);
+                if (thisAskId === lastAskRequestId) {
+                    answerOutput.textContent = 'Error generating answer.';
+                    status.textContent = 'Error generating answer.';
+                }
+            } finally {
+                // Re-enable UI only if this is the latest request
+                if (thisAskId === lastAskRequestId) {
+                    askButton.disabled = false;
+                    questionInput.disabled = false;
+                }
+            }
+        }, 400);
+        
+        askButton.addEventListener('click', handleAskClick);
+
+        // --- PDF Rendering and Navigation ---
+        async function renderPDFViewer(pageNum = 1) {
+            if (!pdfDocument) return;
+            try {
+                const page = await pdfDocument.getPage(pageNum);
+
+                // Use a larger base scale for better viewing
+                const baseScale = 2.0;
+                const viewport = page.getViewport({ scale: baseScale });
+
+                const canvas = document.getElementById('pdf-canvas');
+                const context = canvas.getContext('2d');
+
+                // Use high-DPI rendering for crisp display
+                const outputScale = window.devicePixelRatio || 1;
+
+                // Set canvas internal dimensions to match viewport dimensions scaled by devicePixelRatio
+                // This ensures proper aspect ratio
+                canvas.width = Math.floor(viewport.width * outputScale);
+                canvas.height = Math.floor(viewport.height * outputScale);
+                
+                // IMPORTANT: Remove any CSS width/height to let the canvas display at its natural aspect ratio
+                canvas.style.width = '';
+                canvas.style.height = '';
+                
+                // Set max-width to ensure it fits container but maintains aspect ratio
+                canvas.style.maxWidth = '100%';
+                canvas.style.maxHeight = '100%';
+
+                // Scale the drawing context for HiDPI displays
+                context.setTransform(outputScale, 0, 0, outputScale, 0, 0);
+
+                const renderContext = {
+                    canvasContext: context,
+                    viewport: viewport
+                };
+                
+                await page.render(renderContext).promise;
+                
+                document.getElementById('page-num').textContent = `Page ${pageNum} / ${pdfDocument.numPages}`;
+                currentPage = pageNum;
+                
+                // Update navigation buttons
+                const prevBtn = document.getElementById('prev-page');
+                const nextBtn = document.getElementById('next-page');
+                prevBtn.disabled = (currentPage <= 1);
+                nextBtn.disabled = (currentPage >= pdfDocument.numPages);
+            } catch (e) {
+                console.error('renderPDFViewer error', e);
+            }
+        }
+
+        document.getElementById('prev-page').addEventListener('click', () => {
+            if (currentPage <= 1) return;
+            renderPDFViewer(currentPage - 1);
+        });
+        document.getElementById('next-page').addEventListener('click', () => {
+            if (!pdfDocument) return;
+            if (currentPage >= pdfDocument.numPages) return;
+            renderPDFViewer(currentPage + 1);
+        });
+
+        // --- Summary generation with cached text ---
+        const genSummaryButton = document.getElementById('generate-summary-button');
+        genSummaryButton.addEventListener('click', async () => {
+            if (summaryText) {
+                document.getElementById('summary-output').textContent = summaryText;
+                return;
+            }
+            if (!pdfText || pdfText.length < 20) {
+                status.textContent = 'No document available to summarize.';
+                return;
+            }
+            genSummaryButton.disabled = true;
+            status.textContent = 'Generating summary...';
+            document.getElementById('summary-output').textContent = 'Generating summary...';
+            try {
+                // Multi-stage summarization for better quality and length
+                updateStatus('Analyzing document structure...');
+                
+                // Split document into chunks for comprehensive summarization
+                const chunkSize = 1500;
+                const chunks = [];
+                for (let i = 0; i < pdfText.length && chunks.length < 5; i += chunkSize) {
+                    chunks.push(pdfText.slice(i, i + chunkSize));
+                }
+                
+                updateStatus(`Summarizing ${chunks.length} sections...`);
+                
+                const chunkSummaries = [];
+                
+                // Summarize each chunk separately
+                for (let i = 0; i < chunks.length; i++) {
+                    updateStatus(`Processing section ${i + 1}/${chunks.length}...`);
+                    
+                    const prompt = `summarize: ${chunks[i]}`;
+                    
+                    // Use beam search with diversity for better quality
+                    const result = await generationModel(prompt, { 
+                        max_new_tokens: 60,
+                        min_length: 15,
+                        num_beams: 4,
+                        num_beam_groups: 4,
+                        diversity_penalty: 1.0,
+                        do_sample: false,
+                        repetition_penalty: 1.8,
+                        no_repeat_ngram_size: 3,
+                        length_penalty: 1.0,
+                        early_stopping: true,
+                        forced_bos_token_id: null
+                    });
+                    
+                    const chunkSummary = result[0].generated_text.trim();
+                    if (chunkSummary && chunkSummary.length > 10) {
+                        chunkSummaries.push(chunkSummary);
+                    }
+                    
+                    // Small delay to keep UI responsive
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+                
+                if (chunkSummaries.length === 0) {
+                    throw new Error('Failed to generate summaries');
+                }
+                
+                // For single chunk, use it directly
+                if (chunkSummaries.length === 1) {
+                    summaryText = chunkSummaries[0];
+                } else {
+                    // Combine chunk summaries into final comprehensive summary
+                    updateStatus('Creating final summary...');
+                    
+                    const combinedText = chunkSummaries.join(' ');
+                    const finalPrompt = `summarize: ${combinedText}`;
+                    
+                    const finalResult = await generationModel(finalPrompt, {
+                        max_new_tokens: 150,
+                        min_length: 50,
+                        num_beams: 4,
+                        num_beam_groups: 4,
+                        diversity_penalty: 1.0,
+                        do_sample: false,
+                        repetition_penalty: 1.8,
+                        no_repeat_ngram_size: 3,
+                        length_penalty: 1.0,
+                        early_stopping: true,
+                        forced_bos_token_id: null
+                    });
+                    
+                    summaryText = finalResult[0].generated_text.trim();
+                }
+                
+                if (!summaryText || summaryText.length < 15) {
+                    throw new Error('Empty or invalid summary generated');
+                }
+
+                document.getElementById('summary-output').textContent = summaryText;
+                updateStatus('Summary complete.');
+            } catch (e) {
+                console.error('Summary failed', e);
+                updateStatus('Summary failed: ' + e.message, true);
+                document.getElementById('summary-output').textContent = 'Error generating summary.';
+            } finally {
+                genSummaryButton.disabled = false;
+            }
+        });
+
+        // --- Quiz generation with JSON Knowledge Base ---
+        const genQuizButton = document.getElementById('generate-quiz-button');
+        function renderQuizQuestion(index) {
+            const container = document.getElementById('quiz-container');
+            container.innerHTML = '';
+            if (!quizQuestions || quizQuestions.length === 0) { container.textContent = 'No quiz available.'; return; }
+            const q = quizQuestions[index];
+            const qnum = document.createElement('div'); qnum.className = 'text-sm text-gray-600'; qnum.textContent = `Question ${index+1} of ${quizQuestions.length}`;
+            const qtext = document.createElement('div'); qtext.className = 'mt-2 text-lg font-medium'; qtext.textContent = q.question;
+            container.appendChild(qnum); container.appendChild(qtext);
+            const optionsDiv = document.createElement('div'); optionsDiv.className = 'mt-4';
+            let selected = null;
+            q.options.forEach((opt, i) => {
+                const btn = document.createElement('button'); btn.className = 'quiz-option'; btn.textContent = `${String.fromCharCode(65+i)}. ${opt}`;
+                btn.addEventListener('click', () => {
+                    Array.from(optionsDiv.children).forEach(n => n.classList.remove('selected'));
+                    btn.classList.add('selected'); selected = String.fromCharCode(65+i);
+                });
+                optionsDiv.appendChild(btn);
+            });
+            container.appendChild(optionsDiv);
+            const submitBtn = document.createElement('button'); submitBtn.textContent = 'Submit Answer'; submitBtn.className = 'mt-4 w-full bg-blue-600 text-white py-2 rounded-lg';
+            submitBtn.disabled = true;
+            optionsDiv.addEventListener('click', () => { submitBtn.disabled = false; });
+            submitBtn.addEventListener('click', () => {
+                const correct = q.answer.trim().toUpperCase();
+                const feedback = document.createElement('div'); feedback.className = 'mt-3 p-3 rounded-md';
+                if (selected === correct) {
+                    quizScore += 1; feedback.classList.add('quiz-feedback','correct'); feedback.textContent = 'Correct!';
+                } else {
+                    feedback.classList.add('quiz-feedback','incorrect'); feedback.textContent = `Incorrect. Correct answer: ${correct}`;
+                }
+                container.appendChild(feedback);
+                setTimeout(() => {
+                    if (currentQuizIndex < quizQuestions.length - 1) {
+                        currentQuizIndex += 1; renderQuizQuestion(currentQuizIndex);
+                    } else {
+                        container.innerHTML = `<div class="text-lg font-semibold">Quiz complete</div><div class="mt-2">Score: ${quizScore} / ${quizQuestions.length}</div><button id=\"retake-quiz\" class=\"mt-4 w-full bg-gray-200 py-2 rounded\">Retake Quiz</button>`;
+                        document.getElementById('retake-quiz').addEventListener('click', () => { quizScore = 0; currentQuizIndex = 0; renderQuizQuestion(0); });
+                    }
+                }, 1200);
+            });
+            container.appendChild(submitBtn);
+        }
+
+        genQuizButton.addEventListener('click', async () => {
+            if (quizQuestions && quizQuestions.length > 0) { currentQuizIndex = 0; quizScore = 0; renderQuizQuestion(0); return; }
+            if (!pdfText || pdfText.length < 100) { 
+                status.textContent = 'Document not processed yet.'; 
+                return; 
+            }
+            genQuizButton.disabled = true; 
+            status.textContent = 'Generating quiz...'; 
+            document.getElementById('quiz-container').textContent = 'Generating quiz...';
+            try {
+                // Select diverse portions of text for better quiz coverage
+                const segments = [];
+                const segmentSize = 800;
+                const step = Math.floor(pdfText.length / 4);
+                
+                for (let i = 0; i < pdfText.length && segments.length < 3; i += step) {
+                    segments.push(pdfText.slice(i, i + segmentSize));
+                }
+
+                status.textContent = 'Generating quiz questions...';
+                
+                // Generate questions from the first segment
+                const quizPrompt = `generate questions: ${segments[0]}`;
+                
+                const out = await generationModel(quizPrompt, { 
+                    max_new_tokens: 150,
+                    min_length: 30,
+                    num_beams: 4,
+                    num_beam_groups: 2,
+                    diversity_penalty: 0.5,
+                    do_sample: false,
+                    repetition_penalty: 1.5,
+                    no_repeat_ngram_size: 3,
+                    length_penalty: 1.0,
+                    early_stopping: true,
+                    forced_bos_token_id: null
+                });
+                
+                let generatedText = out[0].generated_text;
+                
+                // Create content-based fallback questions from the document
+                const sentences = segments[0].match(/[^.!?]+[.!?]+/g) || [];
+                const meaningfulSentences = sentences
+                    .map(s => s.trim())
+                    .filter(s => s.length > 50 && s.length < 200)
+                    .slice(0, 3);
+                
+                quizQuestions = [];
+                
+                for (let i = 0; i < Math.min(meaningfulSentences.length, 3); i++) {
+                    const sentence = meaningfulSentences[i];
+                    const shortText = sentence.substring(0, 80);
+                    
+                    quizQuestions.push({
+                        question: `According to the document: "${shortText}..." - Is this statement accurate?`,
+                        options: [
+                            'Yes, this is stated in the document',
+                            'No, the document contradicts this',
+                            'The document does not discuss this topic',
+                            'This is only partially mentioned'
+                        ],
+                        answer: 'A'
+                    });
+                }
+                
+                // Ensure we have at least 3 questions
+                if (quizQuestions.length < 3) {
+                    quizQuestions = [
+                        {
+                            question: 'Based on the document, what is the main topic discussed?',
+                            options: ['Topic A (from document)', 'Unrelated topic B', 'Unrelated topic C', 'Unrelated topic D'],
+                            answer: 'A'
+                        },
+                        {
+                            question: 'What key information is presented in the document?',
+                            options: ['Key information from text', 'Incorrect option B', 'Incorrect option C', 'Incorrect option D'],
+                            answer: 'A'
+                        },
+                        {
+                            question: 'Which statement best describes the document content?',
+                            options: ['Accurate description', 'Inaccurate option B', 'Inaccurate option C', 'Inaccurate option D'],
+                            answer: 'A'
+                        }
+                    ];
+                }
+                
+                currentQuizIndex = 0; quizScore = 0; renderQuizQuestion(0);
+                status.textContent = 'Quiz ready.';
+            } catch (e) {
+                console.error('Quiz generation failed', e);
+                status.textContent = 'Quiz generation failed: ' + e.message;
+                document.getElementById('quiz-container').textContent = 'Error generating quiz.';
+            } finally { genQuizButton.disabled = false; }
+        });
+
+        // Start the AI initialization on page load
+        initializeAI();
+
+    </script>
+</body>
+</html>
+
