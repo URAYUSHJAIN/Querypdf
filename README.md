@@ -47,7 +47,6 @@ Simply open `index.html` in a modern web browser. The AI model will download and
 
 - No server-side processing
 - No data collection or analytics
-- No cookies or tracking
 - Works offline after initial model download
 
 ## License
