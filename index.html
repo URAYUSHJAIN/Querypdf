@@ -457,7 +457,13 @@
                     <div id="quiz-content" role="tabpanel" aria-labelledby="tab-quiz" class="hidden panel">
                         <h3 class="text-lg font-semibold flex-shrink-0">Quiz</h3>
                         <p class="text-sm text-gray-600 mt-2 flex-shrink-0">Test your knowledge with auto-generated questions.</p>
-                        <button id="generate-quiz-button" class="mt-4 w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-all flex-shrink-0">Generate Quiz</button>
+                        <div class="flex items-center gap-3">
+                            <button id="generate-quiz-button" class="mt-4 w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-all flex-shrink-0">Generate Quiz</button>
+                            <div class="mt-4 flex items-center gap-2">
+                                <label for="quiz-count" class="text-sm text-gray-600">Questions:</label>
+                                <input id="quiz-count" type="number" min="1" max="10" value="3" class="w-20 p-2 border border-gray-300 rounded" />
+                            </div>
+                        </div>
                         <div id="quiz-container" class="mt-4 w-full p-4 min-h-[6rem] bg-gray-50 border border-gray-200 rounded-lg overflow-y-auto flex-1">
                             <!-- Quiz UI will appear here -->
                         </div>
@@ -1013,86 +1019,137 @@
                 status.textContent = 'No document available to summarize.';
                 return;
             }
+
             genSummaryButton.disabled = true;
             status.textContent = 'Generating summary...';
             document.getElementById('summary-output').textContent = 'Generating summary...';
+
             try {
-                // Multi-stage summarization for better quality and length
-                updateStatus('Analyzing document structure...');
-                
-                // Split document into chunks for comprehensive summarization
-                const chunkSize = 1500;
-                const chunks = [];
-                for (let i = 0; i < pdfText.length && chunks.length < 5; i += chunkSize) {
-                    chunks.push(pdfText.slice(i, i + chunkSize));
-                }
-                
-                updateStatus(`Summarizing ${chunks.length} sections...`);
-                
-                const chunkSummaries = [];
-                
-                // Summarize each chunk separately
-                for (let i = 0; i < chunks.length; i++) {
-                    updateStatus(`Processing section ${i + 1}/${chunks.length}...`);
-                    
-                    const prompt = `summarize: ${chunks[i]}`;
-                    
-                    // Use beam search with diversity for better quality
-                    const result = await generationModel(prompt, { 
-                        max_new_tokens: 60,
-                        min_length: 15,
+                // If the document is small enough, use a single-shot summarization
+                // This makes summarization instant and more reliable for short PDFs
+                const shortDocThreshold = 3000; // characters
+                if (pdfText.length <= shortDocThreshold) {
+                    updateStatus(`Small document (${pdfText.length} chars) — using single-shot summary...`);
+                    // Clean the text a bit to remove odd whitespace and repeated short lines
+                    const cleaned = pdfText.replace(/\s+/g, ' ').trim();
+                    const prompt = `You are a helpful assistant. Summarize the following text into a concise, factual summary of 3 sentences. Use only information present in the text and avoid adding any information that is not stated. If the text lacks enough information, say "Not enough information to summarize."\n\nText: ${cleaned}`;
+
+                    // Use deterministic decoding to reduce hallucination
+                    const out = await generationModel(prompt, {
+                        max_new_tokens: 160,
+                        min_length: 20,
                         num_beams: 4,
-                        num_beam_groups: 4,
-                        diversity_penalty: 1.0,
                         do_sample: false,
-                        repetition_penalty: 1.8,
+                        repetition_penalty: 1.5,
                         no_repeat_ngram_size: 3,
-                        length_penalty: 1.0,
                         early_stopping: true,
                         forced_bos_token_id: null
                     });
-                    
-                    const chunkSummary = result[0].generated_text.trim();
-                    if (chunkSummary && chunkSummary.length > 10) {
-                        chunkSummaries.push(chunkSummary);
+
+                    const candidate = (out && out[0] && out[0].generated_text) ? out[0].generated_text.trim() : '';
+                    if (candidate && candidate.length > 10) {
+                        summaryText = candidate;
+                        document.getElementById('summary-output').textContent = summaryText;
+                        updateStatus('Summary complete.');
+                        return;
                     }
-                    
+
+                    // If single-shot failed, fall through to chunked logic below
+                    console.warn('Single-shot summary produced empty result; falling back to chunked summarization');
+                }
+
+                // Multi-stage summarization for larger documents
+                updateStatus('Analyzing document structure...');
+
+                // Split document into chunks for comprehensive summarization
+                const chunkSize = 1200; // smaller chunks to improve relevance
+                const chunks = [];
+                for (let i = 0; i < pdfText.length && chunks.length < 8; i += chunkSize) {
+                    chunks.push(pdfText.slice(i, i + chunkSize));
+                }
+
+                updateStatus(`Summarizing ${chunks.length} sections...`);
+
+                const chunkSummaries = [];
+
+                // Summarize each chunk separately with conservative settings
+                for (let i = 0; i < chunks.length; i++) {
+                    updateStatus(`Processing section ${i + 1}/${chunks.length}...`);
+
+                    const prompt = `summarize: ${chunks[i]}`;
+
+                    try {
+                        const result = await generationModel(prompt, {
+                            max_new_tokens: 80,
+                            min_length: 12,
+                            num_beams: 4,
+                            do_sample: false,
+                            repetition_penalty: 1.5,
+                            no_repeat_ngram_size: 3,
+                            early_stopping: true,
+                            forced_bos_token_id: null
+                        });
+
+                        const chunkSummary = (result && result[0] && result[0].generated_text) ? result[0].generated_text.trim() : '';
+                        if (chunkSummary && chunkSummary.length > 10) {
+                            chunkSummaries.push(chunkSummary);
+                        }
+                    } catch (innerErr) {
+                        console.warn('Chunk summarization failed for section', i, innerErr);
+                    }
+
                     // Small delay to keep UI responsive
-                    await new Promise(resolve => setTimeout(resolve, 100));
+                    await new Promise(resolve => setTimeout(resolve, 80));
                 }
-                
+
+                // If chunk summarization failed or produced nothing, attempt a final fallback
                 if (chunkSummaries.length === 0) {
-                    throw new Error('Failed to generate summaries');
+                    updateStatus('Chunked summarization failed — trying single-shot fallback...');
+                    const fallbackPrompt = `You are a helpful assistant. Summarize the following text into a concise factual summary of up to 3 sentences. Use only the given information and avoid adding details not present. If insufficient information, reply: 'Not enough information to summarize.'\n\nText: ${pdfText.slice(0, 4000).replace(/\s+/g,' ').trim()}`;
+                    const fallbackOut = await generationModel(fallbackPrompt, {
+                        max_new_tokens: 180,
+                        min_length: 18,
+                        num_beams: 4,
+                        do_sample: false,
+                        repetition_penalty: 1.4,
+                        no_repeat_ngram_size: 3,
+                        early_stopping: true,
+                        forced_bos_token_id: null
+                    });
+
+                    const fallbackCandidate = (fallbackOut && fallbackOut[0] && fallbackOut[0].generated_text) ? fallbackOut[0].generated_text.trim() : '';
+                    if (fallbackCandidate && fallbackCandidate.length > 10) {
+                        summaryText = fallbackCandidate;
+                        document.getElementById('summary-output').textContent = summaryText;
+                        updateStatus('Summary complete.');
+                        return;
+                    }
+
+                    throw new Error('Failed to generate summary via chunking or fallback');
                 }
-                
-                // For single chunk, use it directly
+
+                // Combine chunk summaries into final comprehensive summary
                 if (chunkSummaries.length === 1) {
                     summaryText = chunkSummaries[0];
                 } else {
-                    // Combine chunk summaries into final comprehensive summary
                     updateStatus('Creating final summary...');
-                    
                     const combinedText = chunkSummaries.join(' ');
                     const finalPrompt = `summarize: ${combinedText}`;
-                    
                     const finalResult = await generationModel(finalPrompt, {
-                        max_new_tokens: 150,
-                        min_length: 50,
+                        max_new_tokens: 180,
+                        min_length: 30,
                         num_beams: 4,
-                        num_beam_groups: 4,
-                        diversity_penalty: 1.0,
                         do_sample: false,
-                        repetition_penalty: 1.8,
+                        repetition_penalty: 1.6,
                         no_repeat_ngram_size: 3,
-                        length_penalty: 1.0,
                         early_stopping: true,
                         forced_bos_token_id: null
                     });
-                    
-                    summaryText = finalResult[0].generated_text.trim();
+
+                    summaryText = (finalResult && finalResult[0] && finalResult[0].generated_text) ? finalResult[0].generated_text.trim() : '';
                 }
-                
-                if (!summaryText || summaryText.length < 15) {
+
+                if (!summaryText || summaryText.length < 12) {
                     throw new Error('Empty or invalid summary generated');
                 }
 
@@ -1153,91 +1210,112 @@
         }
 
         genQuizButton.addEventListener('click', async () => {
+            // If quiz already generated, just start it
             if (quizQuestions && quizQuestions.length > 0) { currentQuizIndex = 0; quizScore = 0; renderQuizQuestion(0); return; }
-            if (!pdfText || pdfText.length < 100) { 
-                status.textContent = 'Document not processed yet.'; 
+
+            const requestedCount = Math.min(10, Math.max(1, parseInt(document.getElementById('quiz-count').value || '3')));
+
+            if (!pdfText || pdfText.length < 80) { 
+                status.textContent = 'Document not processed yet or too short for quiz.'; 
                 return; 
             }
+
             genQuizButton.disabled = true; 
             status.textContent = 'Generating quiz...'; 
             document.getElementById('quiz-container').textContent = 'Generating quiz...';
+
             try {
-                // Select diverse portions of text for better quiz coverage
+                // Prepare segments for coverage
                 const segments = [];
                 const segmentSize = 800;
-                const step = Math.floor(pdfText.length / 4);
-                
-                for (let i = 0; i < pdfText.length && segments.length < 3; i += step) {
+                const step = Math.max(1, Math.floor(pdfText.length / Math.max(2, requestedCount)));
+                for (let i = 0; i < pdfText.length && segments.length < Math.max(1, requestedCount); i += step) {
                     segments.push(pdfText.slice(i, i + segmentSize));
                 }
 
-                status.textContent = 'Generating quiz questions...';
-                
-                // Generate questions from the first segment
-                const quizPrompt = `generate questions: ${segments[0]}`;
-                
-                const out = await generationModel(quizPrompt, { 
-                    max_new_tokens: 150,
-                    min_length: 30,
-                    num_beams: 4,
-                    num_beam_groups: 2,
-                    diversity_penalty: 0.5,
-                    do_sample: false,
-                    repetition_penalty: 1.5,
-                    no_repeat_ngram_size: 3,
-                    length_penalty: 1.0,
-                    early_stopping: true,
-                    forced_bos_token_id: null
-                });
-                
-                let generatedText = out[0].generated_text;
-                
-                // Create content-based fallback questions from the document
-                const sentences = segments[0].match(/[^.!?]+[.!?]+/g) || [];
-                const meaningfulSentences = sentences
-                    .map(s => s.trim())
-                    .filter(s => s.length > 50 && s.length < 200)
-                    .slice(0, 3);
-                
-                quizQuestions = [];
-                
-                for (let i = 0; i < Math.min(meaningfulSentences.length, 3); i++) {
-                    const sentence = meaningfulSentences[i];
-                    const shortText = sentence.substring(0, 80);
-                    
-                    quizQuestions.push({
-                        question: `According to the document: "${shortText}..." - Is this statement accurate?`,
-                        options: [
-                            'Yes, this is stated in the document',
-                            'No, the document contradicts this',
-                            'The document does not discuss this topic',
-                            'This is only partially mentioned'
-                        ],
-                        answer: 'A'
+                status.textContent = 'Requesting quiz questions from model...';
+
+                // Ask the model to return a JSON array of questions to make parsing deterministic
+                const combinedText = segments.join('\n\n');
+                const quizPrompt = `You are a helpful assistant. Generate exactly ${requestedCount} multiple-choice questions from the text below. Each question must have 4 options labeled A-D and the correct answer letter. Use only information present in the text. Respond ONLY with a JSON array like [{"question":"...","options":["...","...","...","..."],"answer":"A"}, ...] with exactly ${requestedCount} entries. Text:\n\n${combinedText}`;
+
+                let out = null;
+                try {
+                    out = await generationModel(quizPrompt, {
+                        max_new_tokens: 700,
+                        num_beams: 4,
+                        do_sample: false,
+                        repetition_penalty: 1.4,
+                        no_repeat_ngram_size: 3,
+                        early_stopping: true,
+                        forced_bos_token_id: null
                     });
+                } catch (genErr) {
+                    console.warn('Model request for quiz failed:', genErr);
                 }
-                
-                // Ensure we have at least 3 questions
-                if (quizQuestions.length < 3) {
-                    quizQuestions = [
-                        {
-                            question: 'Based on the document, what is the main topic discussed?',
-                            options: ['Topic A (from document)', 'Unrelated topic B', 'Unrelated topic C', 'Unrelated topic D'],
-                            answer: 'A'
-                        },
-                        {
-                            question: 'What key information is presented in the document?',
-                            options: ['Key information from text', 'Incorrect option B', 'Incorrect option C', 'Incorrect option D'],
-                            answer: 'A'
-                        },
-                        {
-                            question: 'Which statement best describes the document content?',
-                            options: ['Accurate description', 'Inaccurate option B', 'Inaccurate option C', 'Inaccurate option D'],
-                            answer: 'A'
+
+                let generatedText = out && out[0] && out[0].generated_text ? out[0].generated_text : '';
+
+                // Try to parse JSON directly, or extract JSON substring
+                let parsed = null;
+                if (generatedText) {
+                    try { parsed = JSON.parse(generatedText); } catch (e) {
+                        // try to find JSON-like substring
+                        const jsonMatch = generatedText.match(/\[\s*\{[\s\S]*\}\s*\]/m);
+                        if (jsonMatch) {
+                            try { parsed = JSON.parse(jsonMatch[0]); } catch (e2) { parsed = null; }
                         }
-                    ];
+                    }
                 }
-                
+
+                quizQuestions = [];
+
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    // Normalize parsed entries and limit to requestedCount
+                    for (let i = 0; i < Math.min(requestedCount, parsed.length); i++) {
+                        const q = parsed[i];
+                        if (!q || !q.question || !q.options) continue;
+                        // ensure options array length is 4
+                        const opts = Array.isArray(q.options) ? q.options.slice(0,4) : [];
+                        while (opts.length < 4) opts.push('N/A');
+                        const ans = (typeof q.answer === 'string' && q.answer.length > 0) ? q.answer.trim().charAt(0).toUpperCase() : 'A';
+                        quizQuestions.push({ question: q.question.trim(), options: opts, answer: ans });
+                    }
+                }
+
+                // Fallback extractive method if parsing failed or produced too few questions
+                if (quizQuestions.length < requestedCount) {
+                    status.textContent = 'Generating extractive fallback questions...';
+
+                    // Build a pool of meaningful sentences across segments
+                    const textPool = segments.join(' ');
+                    const sentences = textPool.match(/[^.!?]+[.!?]+/g) || [];
+                    const meaningfulSentences = sentences
+                        .map(s => s.trim())
+                        .filter(s => s.length > 40 && s.length < 220);
+
+                    for (let i = 0; i < requestedCount && quizQuestions.length < requestedCount; i++) {
+                        const sentence = meaningfulSentences[i] || meaningfulSentences[i % meaningfulSentences.length] || textPool.slice(i*80, i*80+80);
+                        const shortText = (sentence || '').substring(0, 100).trim();
+                        quizQuestions.push({
+                            question: `According to the document: "${shortText}..." - Which is correct?`,
+                            options: [
+                                'This statement accurately reflects the document',
+                                'This statement contradicts the document',
+                                'Document does not mention this',
+                                'Partially mentioned in the document'
+                            ],
+                            answer: 'A'
+                        });
+                    }
+                }
+
+                // Final safety: ensure we have exactly requestedCount items
+                while (quizQuestions.length > requestedCount) quizQuestions.pop();
+                while (quizQuestions.length < requestedCount) {
+                    quizQuestions.push({ question: 'No more content available to generate questions.', options: ['N/A','N/A','N/A','N/A'], answer: 'A' });
+                }
+
                 currentQuizIndex = 0; quizScore = 0; renderQuizQuestion(0);
                 status.textContent = 'Quiz ready.';
             } catch (e) {
